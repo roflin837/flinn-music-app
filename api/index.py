@@ -130,19 +130,20 @@ def api_stream(yt_id):
 def get_content():
     mode = request.args.get('mode', 'home')
     pid = request.args.get('pid')
-    # Inisialisasi DB di setiap request untuk memastikan file di /tmp ada
     init_db()
     with get_db() as conn:
         if mode == 'liked':
-            songs = conn.execute('SELECT * FROM songs WHERE is_favorite = 1 GROUP BY yt_id').fetchall()
+            songs = conn.execute('SELECT * FROM songs WHERE is_favorite = 1').fetchall()
             title = "Lagu yang Disukai"
         elif mode == 'playlist' and pid:
             songs = conn.execute('SELECT * FROM songs WHERE pid = ?', (pid,)).fetchall()
             res = conn.execute('SELECT name FROM playlists WHERE id = ?', (pid,)).fetchone()
             title = res['name'] if res else "Playlist Detail"
         else:
-            songs = conn.execute('SELECT * FROM songs GROUP BY yt_id ORDER BY id DESC LIMIT 40').fetchall()
-            title = "Cocok Untuk Roflin"
+            # KITA HAPUS 'GROUP BY' DAN 'LIMIT' BIAR SEMUA 637+ LAGU MUNCUL
+            songs = conn.execute('SELECT * FROM songs ORDER BY id DESC').fetchall()
+            title = "Koleksi Flinn"
+        
         return jsonify({"songs": [dict(s) for s in songs], "title": title})
 
 @app.route('/api/search_suggestions', methods=['POST'])
@@ -292,45 +293,27 @@ HTML_TEMPLATE = '''
         .active-green { color: var(--spotify-green) !important; }
         .heart-active { color: var(--spotify-green) !important; animation: beat 0.3s ease; }
         @keyframes beat { 0% { transform: scale(1); } 50% { transform: scale(1.4); } 100% { transform: scale(1); } }
-        /* --- RESPONSIVE ENGINE UNTUK HP (FLINN-ONLY) --- */
-@media (max-width: 768px) {
-    .app-shell {
-        /* Sidebar ilang di HP, kita fokus ke konten */
-        grid-template-areas: "main" "player";
-        grid-template-columns: 1fr;
-        grid-template-rows: 1fr 100px;
-        padding: 0;
-    }
 
-    .sidebar {
-        display: none; /* Sidebar disembunyiin dulu biar lega */
-    }
-
-    .main-content {
-        border-radius: 0;
-    }
-
-    /* Grid lagu jadi 2 kolom aja di HP biar nggak kekecilan */
-    #mainGrid {
-        grid-template-cols: repeat(2, minmax(0, 1fr)) !important;
-        gap: 12px;
-        padding: 15px;
-    }
-
-    /* Player bar di HP dibikin simpel */
-    .player-bar {
-        padding: 0 15px;
-    }
-
-    /* Sembunyikan volume & cover lagu di player biar nggak sesek */
-    #trackCover, .player-bar .flex:last-child {
-        display: none;
-    }
-
-    .player-bar .flex:first-child {
-        width: 60%;
-    }
-}
+        /* FIX UNTUK HP */
+        @media (max-width: 768px) {
+            .app-shell {
+                grid-template-areas: "main" "player";
+                grid-template-columns: 1fr;
+                grid-template-rows: 1fr 100px;
+                padding: 0;
+            }
+            .sidebar { display: none; } /* Sidebar ganggu di HP, kita sembunyiin */
+            .main-content { border-radius: 0; }
+            #mainGrid { 
+                grid-template-columns: repeat(2, 1fr) !important; 
+                gap: 12px; 
+                padding: 10px;
+            }
+            .player-bar { padding: 0 10px; }
+            #trackCover { width: 40px; height: 40px; }
+            #trackTitle { font-size: 12px; }
+        }
+        
     </style>
 </head>
 <body>
