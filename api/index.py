@@ -292,6 +292,45 @@ HTML_TEMPLATE = '''
         .active-green { color: var(--spotify-green) !important; }
         .heart-active { color: var(--spotify-green) !important; animation: beat 0.3s ease; }
         @keyframes beat { 0% { transform: scale(1); } 50% { transform: scale(1.4); } 100% { transform: scale(1); } }
+        /* --- RESPONSIVE ENGINE UNTUK HP (FLINN-ONLY) --- */
+@media (max-width: 768px) {
+    .app-shell {
+        /* Sidebar ilang di HP, kita fokus ke konten */
+        grid-template-areas: "main" "player";
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 100px;
+        padding: 0;
+    }
+
+    .sidebar {
+        display: none; /* Sidebar disembunyiin dulu biar lega */
+    }
+
+    .main-content {
+        border-radius: 0;
+    }
+
+    /* Grid lagu jadi 2 kolom aja di HP biar nggak kekecilan */
+    #mainGrid {
+        grid-template-cols: repeat(2, minmax(0, 1fr)) !important;
+        gap: 12px;
+        padding: 15px;
+    }
+
+    /* Player bar di HP dibikin simpel */
+    .player-bar {
+        padding: 0 15px;
+    }
+
+    /* Sembunyikan volume & cover lagu di player biar nggak sesek */
+    #trackCover, .player-bar .flex:last-child {
+        display: none;
+    }
+
+    .player-bar .flex:first-child {
+        width: 60%;
+    }
+}
     </style>
 </head>
 <body>
