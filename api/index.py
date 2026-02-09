@@ -85,6 +85,30 @@ def stream(yt_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/search')
+def search():
+    query = request.args.get('q')
+    if not query:
+        return jsonify({"content": []})
+    
+    # Daftar server buat dipake sama Backend
+    search_instances = [
+        'https://pipedapi.kavin.rocks',
+        'https://pipedapi.moomoo.me',
+        'https://api.piped.projectsegfau.lt'
+    ]
+    
+    for base in search_instances:
+        try:
+            # Server Python biasanya lebih kuat buat bypass daripada browser
+            res = requests.get(f"{base}/search?q={query}&filter=music_videos", timeout=5)
+            if res.status_code == 200:
+                return jsonify(res.json())
+        except:
+            continue
+            
+    return jsonify({"error": "Semua server sibuk"}), 500
+
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="id">
@@ -493,70 +517,49 @@ HTML_TEMPLATE = '''
         if (!q) return;
         
         const resultDiv = document.getElementById('searchResult');
+        // Tampilkan animasi loading
         resultDiv.innerHTML = '<div class="flex justify-center py-10"><i class="fa-solid fa-spinner animate-spin text-3xl text-green-500"></i></div>';
         
-        // Daftar server Piped yang lebih jarang kena blokir
-        const searchInstances = [
-            'https://pipedapi.kavin.rocks',
-            'https://pipedapi.moomoo.me',
-            'https://api.piped.projectsegfau.lt',
-            'https://pipedapi.drgns.space',
-            'https://pipedapi.lcom.cloud'
-        ];
+        try {
+            // Kita panggil "kurir" Python kita sendiri
+            const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+            
+            if (!res.ok) throw new Error("Server Mogok");
+            
+            const data = await res.json();
+            
+            if (data.content && data.content.length > 0) {
+                resultDiv.innerHTML = data.content.map(s => {
+                    // Bersihkan data lagu agar tidak error saat dipasang di HTML
+                    const songData = {
+                        title: s.title.replace(/'/g, ""),
+                        artist: s.uploaderName ? s.uploaderName.replace(/'/g, "") : "Unknown Artist",
+                        cover: s.thumbnail,
+                        yt_id: s.url ? s.url.split("v=")[1] : (s.videoId || ""),
+                        duration: s.duration >= 0 ? formatTime(s.duration) : "3:00"
+                    };
     
-        let success = false;
-    
-        // Kita coba satu-satu servernya sampai dapet hasil
-        for (let base of searchInstances) {
-            try {
-                console.log("Mencoba search lewat:", base);
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 4000); // Timeout 4 detik
-    
-                const res = await fetch(`${base}/search?q=${encodeURIComponent(q)}&filter=music_videos`, { 
-                    signal: controller.signal 
-                });
-                clearTimeout(timeoutId);
-    
-                if (!res.ok) throw new Error("Server Error");
-    
-                const data = await res.json();
-                
-                if (data.content && data.content.length > 0) {
-                    resultDiv.innerHTML = data.content.map(s => {
-                        const songData = {
-                            title: s.title.replace(/'/g, ""),
-                            artist: s.uploaderName.replace(/'/g, ""),
-                            cover: s.thumbnail,
-                            yt_id: s.url.split("v=")[1],
-                            duration: s.duration >= 0 ? formatTime(s.duration) : "3:00"
-                        };
-    
-                        return `
-                            <div class="flex items-center gap-3 p-2 bg-zinc-900/30 rounded-lg cursor-pointer hover:bg-zinc-800 transition">
-                                <img src="${songData.cover}" onerror="this.src='${DEFAULT_COVER}'" class="w-12 h-12 rounded object-cover shadow">
-                                <div class="flex-1 overflow-hidden" onclick="playSong('${songData.yt_id}', '${songData.title}', '${songData.artist}', '${songData.cover}')">
-                                    <div class="text-sm font-bold truncate">${songData.title}</div>
-                                    <div class="text-[10px] text-zinc-400 truncate">${songData.artist}</div>
-                                </div>
-                                <i class="fa-solid fa-plus-circle text-xl text-green-500 p-2 hover:scale-110" 
-                                   onclick='addSong(${JSON.stringify(songData).replace(/'/g, "&apos;")})'></i>
+                    return `
+                        <div class="flex items-center gap-3 p-2 bg-zinc-900/30 rounded-lg cursor-pointer hover:bg-zinc-800 transition">
+                            <img src="${songData.cover}" onerror="this.src='${DEFAULT_COVER}'" class="w-12 h-12 rounded object-cover shadow">
+                            <div class="flex-1 overflow-hidden" onclick="playSong('${songData.yt_id}', '${songData.title}', '${songData.artist}', '${songData.cover}')">
+                                <div class="text-sm font-bold truncate">${songData.title}</div>
+                                <div class="text-[10px] text-zinc-400 truncate">${songData.artist}</div>
                             </div>
-                        `;
-                    }).join('');
-                    success = true;
-                    break; // Kalau sudah berhasil, berhenti looping
-                }
-            } catch (err) {
-                console.warn(`Server ${base} gagal:`, err.message);
+                            <i class="fa-solid fa-plus-circle text-xl text-green-500 p-2 hover:scale-110" 
+                               onclick='addSong(${JSON.stringify(songData).replace(/'/g, "&apos;")})'></i>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                resultDiv.innerHTML = '<p class="text-center py-10 text-zinc-500 italic">Lagu nggak ketemu, coba kata kunci lain ya!</p>';
             }
-        }
-    
-        if (!success) {
+        } catch (err) {
+            // Jika Python gagal atau Piped beneran down semua
             resultDiv.innerHTML = `
                 <div class="text-center py-10">
-                    <p class="text-red-500 mb-2">Semua server lagi sibuk banget, Flinn.</p>
-                    <button onclick="doSearch()" class="text-xs bg-zinc-800 px-4 py-2 rounded-full border border-zinc-700">Coba Lagi</button>
+                    <p class="text-red-500 mb-2">Aduh Flinn, server lagi beneran tepar!</p>
+                    <button onclick="doSearch()" class="text-xs bg-zinc-800 px-4 py-2 rounded-full border border-zinc-700">Coba Sekali Lagi</button>
                 </div>
             `;
         }
