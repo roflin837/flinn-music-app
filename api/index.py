@@ -357,7 +357,7 @@ HTML_TEMPLATE = '''
     }
 
     async function playSong(id, title, artist, cover) {
-        // 1. Update Tampilan Player
+        // 1. Update UI
         document.getElementById('pTitle').innerText = title;
         document.getElementById('mTitle').innerText = title;
         document.getElementById('pArtist').innerText = artist;
@@ -365,46 +365,62 @@ HTML_TEMPLATE = '''
         document.getElementById('pCover').src = cover;
         document.getElementById('mCover').src = cover;
     
-        // 2. Efek Loading
         const btn = document.getElementById('playBtn');
         btn.className = "fa-solid fa-spinner animate-spin text-2xl text-green-500";
     
-        // Daftar server Piped (kalau satu mati, dia coba yang lain)
+        // Daftar instance Piped yang biasanya lebih stabil di Indonesia tanpa VPN
         const instances = [
-            'https://pipedapi.lunar.icu',
-            'https://api.piped.victr.me',
-            'https://pipedapi.kavin.rocks'
+            'https://pipedapi.kavin.rocks',
+            'https://pipedapi.moomoo.me',
+            'https://api.piped.projectsegfau.lt',
+            'https://pipedapi.drgns.space',
+            'https://piped-api.lcom.cloud'
         ];
-        
+    
         let audioUrl = null;
     
-        // 3. Cari link audio langsung dari browser (Bypass Vercel)
+        // Loop untuk mencoba setiap server sampai ketemu yang jalan
         for (let base of instances) {
             try {
                 console.log("Mencoba ambil audio dari:", base);
-                const res = await fetch(`${base}/streams/${id}`);
+                // Tambahkan timeout agar tidak kelamaan nunggu server yang mati
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
+                const res = await fetch(`${base}/streams/${id}`, { signal: controller.signal });
+                clearTimeout(timeoutId);
+    
                 const data = await res.json();
+                
                 if (data.audioStreams && data.audioStreams.length > 0) {
-                    audioUrl = data.audioStreams[0].url;
+                    // Cari stream dengan bitrate yang pas (biasanya m4a lebih stabil)
+                    const stream = data.audioStreams.find(s => s.format === 'M4A') || data.audioStreams[0];
+                    audioUrl = stream.url;
+                    console.log("Berhasil dapet link dari:", base);
                     break; 
                 }
             } catch (e) {
-                console.error("Server " + base + " gagal, mencoba yang lain...");
+                console.warn(`Server ${base} gagal/timeout. Nyoba yang lain...`);
             }
         }
     
         if (audioUrl) {
             audio.src = audioUrl;
-            audio.play().then(() => {
-                isPlaying = true;
-                updateUI();
-            }).catch(e => {
-                alert("Klik Play secara manual untuk memutar!");
-                updateUI();
-            });
+            audio.load(); // Penting: Refresh source audio
+            audio.play()
+                .then(() => {
+                    isPlaying = true;
+                    updateUI();
+                })
+                .catch(e => {
+                    // Browser sering blokir autoplay kalau user belum klik apa-apa
+                    console.error("Autoplay diblokir:", e);
+                    btn.className = "fa-solid fa-play text-2xl cursor-pointer text-red-500";
+                    alert("Klik tombol Play manual ya, diblokir browser nih!");
+                });
         } else {
-            alert("Semua server audio sedang sibuk. Coba lagu lain!");
-            updateUI();
+            btn.className = "fa-solid fa-circle-xmark text-2xl text-red-500";
+            alert("Semua server lagi mogok, Flinn! Coba lagi bentar atau cari lagu lain.");
         }
     }
 
