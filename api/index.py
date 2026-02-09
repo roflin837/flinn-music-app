@@ -65,11 +65,19 @@ def add_song():
     s = request.json
     try:
         with get_db() as conn:
+            # Pastikan field yang wajib ada tidak kosong
+            if not s.get('yt_id'): return jsonify({"status": "error"}), 400
+            
             conn.execute('INSERT OR IGNORE INTO songs (title, artist, cover, duration, yt_id) VALUES (?,?,?,?,?)',
-                         (s['title'], s['artist'], s['cover'], s['duration'], s['yt_id']))
+                         (s.get('title', 'Unknown Title'), 
+                          s.get('artist', 'Unknown Artist'), 
+                          s.get('cover'), 
+                          s.get('duration', '0:00'), 
+                          s.get('yt_id')))
             conn.commit()
         return jsonify({"status": "success"})
-    except:
+    except Exception as e:
+        print(f"Error add_song: {e}")
         return jsonify({"status": "error"}), 500
     
 @app.route('/api/delete/<yt_id>', methods=['DELETE'])
