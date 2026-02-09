@@ -495,40 +495,70 @@ HTML_TEMPLATE = '''
         const resultDiv = document.getElementById('searchResult');
         resultDiv.innerHTML = '<div class="flex justify-center py-10"><i class="fa-solid fa-spinner animate-spin text-3xl text-green-500"></i></div>';
         
-        try {
-            // Kita cari lagu lewat Piped API (Langsung dari browser, bukan lewat Vercel)
-            const res = await fetch(`https://pipedapi.lunar.icu/search?q=${encodeURIComponent(q)}&filter=music_videos`);
-            const data = await res.json();
-            
-            if (!data.content || data.content.length === 0) {
-                resultDiv.innerHTML = '<p class="text-center text-zinc-500">Lagu gak ketemu, Flinn.</p>';
-                return;
+        // Daftar server Piped yang lebih jarang kena blokir
+        const searchInstances = [
+            'https://pipedapi.kavin.rocks',
+            'https://pipedapi.moomoo.me',
+            'https://api.piped.projectsegfau.lt',
+            'https://pipedapi.drgns.space',
+            'https://pipedapi.lcom.cloud'
+        ];
+    
+        let success = false;
+    
+        // Kita coba satu-satu servernya sampai dapet hasil
+        for (let base of searchInstances) {
+            try {
+                console.log("Mencoba search lewat:", base);
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 4000); // Timeout 4 detik
+    
+                const res = await fetch(`${base}/search?q=${encodeURIComponent(q)}&filter=music_videos`, { 
+                    signal: controller.signal 
+                });
+                clearTimeout(timeoutId);
+    
+                if (!res.ok) throw new Error("Server Error");
+    
+                const data = await res.json();
+                
+                if (data.content && data.content.length > 0) {
+                    resultDiv.innerHTML = data.content.map(s => {
+                        const songData = {
+                            title: s.title.replace(/'/g, ""),
+                            artist: s.uploaderName.replace(/'/g, ""),
+                            cover: s.thumbnail,
+                            yt_id: s.url.split("v=")[1],
+                            duration: s.duration >= 0 ? formatTime(s.duration) : "3:00"
+                        };
+    
+                        return `
+                            <div class="flex items-center gap-3 p-2 bg-zinc-900/30 rounded-lg cursor-pointer hover:bg-zinc-800 transition">
+                                <img src="${songData.cover}" onerror="this.src='${DEFAULT_COVER}'" class="w-12 h-12 rounded object-cover shadow">
+                                <div class="flex-1 overflow-hidden" onclick="playSong('${songData.yt_id}', '${songData.title}', '${songData.artist}', '${songData.cover}')">
+                                    <div class="text-sm font-bold truncate">${songData.title}</div>
+                                    <div class="text-[10px] text-zinc-400 truncate">${songData.artist}</div>
+                                </div>
+                                <i class="fa-solid fa-plus-circle text-xl text-green-500 p-2 hover:scale-110" 
+                                   onclick='addSong(${JSON.stringify(songData).replace(/'/g, "&apos;")})'></i>
+                            </div>
+                        `;
+                    }).join('');
+                    success = true;
+                    break; // Kalau sudah berhasil, berhenti looping
+                }
+            } catch (err) {
+                console.warn(`Server ${base} gagal:`, err.message);
             }
+        }
     
-            resultDiv.innerHTML = data.content.map(s => {
-                // Kita bungkus datanya biar formatnya sama kayak database lu
-                const songData = {
-                    title: s.title.replace(/'/g, ""),
-                    artist: s.uploaderName.replace(/'/g, ""),
-                    cover: s.thumbnail,
-                    yt_id: s.url.split("v=")[1],
-                    duration: s.duration >= 0 ? formatTime(s.duration) : "3:00"
-                };
-    
-                return `
-                    <div class="flex items-center gap-3 p-2 bg-zinc-900/30 rounded-lg cursor-pointer hover:bg-zinc-800 transition">
-                        <img src="${songData.cover}" onerror="this.src='${DEFAULT_COVER}'" class="w-12 h-12 rounded object-cover shadow">
-                        <div class="flex-1 overflow-hidden" onclick="playSong('${songData.yt_id}', '${songData.title}', '${songData.artist}', '${songData.cover}')">
-                            <div class="text-sm font-bold truncate">${songData.title}</div>
-                            <div class="text-[10px] text-zinc-400 truncate">${songData.artist}</div>
-                        </div>
-                        <i class="fa-solid fa-plus-circle text-xl text-green-500 p-2 hover:scale-110" 
-                           onclick='addSong(${JSON.stringify(songData).replace(/'/g, "&apos;")})'></i>
-                    </div>
-                `;
-            }).join('');
-        } catch (err) {
-            resultDiv.innerHTML = '<p class="text-center text-red-500">Gagal mencari lagu. Server sibuk!</p>';
+        if (!success) {
+            resultDiv.innerHTML = `
+                <div class="text-center py-10">
+                    <p class="text-red-500 mb-2">Semua server lagi sibuk banget, Flinn.</p>
+                    <button onclick="doSearch()" class="text-xs bg-zinc-800 px-4 py-2 rounded-full border border-zinc-700">Coba Lagi</button>
+                </div>
+            `;
         }
     }
 
