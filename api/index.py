@@ -93,21 +93,24 @@ def delete_song(yt_id):
 @app.route('/api/stream/<yt_id>')
 def stream(yt_id):
     try:
-        # Kita minta tolong ke instance Piped (bisa ganti-ganti kalau satu mati)
-        # Daftar instance: https://github.com/TeamPiped/Piped/wiki/Instances
-        piped_api = f"https://pipedapi.kavin.rocks/streams/{yt_id}"
+        # Pake instance yang beda buat jaga-jaga
+        piped_api = f"https://pipedapi.lunar.icu/streams/{yt_id}"
         
-        res = requests.get(piped_api, timeout=10)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        
+        res = requests.get(piped_api, headers=headers, timeout=10)
         data = res.json()
         
-        # Cari link audio yang kualitasnya bagus (audioOnly)
-        audio_streams = [s for s in data.get('audioStreams', [])]
+        # Cari audio stream yang bukan cuma link, tapi ada isinya
+        audio_streams = data.get('audioStreams', [])
         
         if audio_streams:
-            # Ambil stream audio pertama yang ketemu
+            # Kadang urutan pertama bukan yang terbaik, tapi kita ambil yang ada
             return jsonify({"url": audio_streams[0]['url']})
         
-        return jsonify({"error": "No audio stream found"}), 404
+        return jsonify({"error": "Audio tidak ditemukan di server Piped"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
