@@ -386,42 +386,56 @@ HTML_TEMPLATE = '''
     }
 
     async function playSong(id, title, artist, cover) {
-            // 1. Update Tampilan Player (Bar bawah dan Modal Full)
-            document.getElementById('pTitle').innerText = title;
-            document.getElementById('mTitle').innerText = title;
-            document.getElementById('pArtist').innerText = artist;
-            document.getElementById('mArtist').innerText = artist;
-            document.getElementById('pCover').src = cover;
-            document.getElementById('mCover').src = cover;
-
-            // 2. Tampilkan Loading
-            const btn = document.getElementById('playBtn');
-            const mBtn = document.getElementById('mPlayBtn');
-            btn.className = "fa-solid fa-spinner animate-spin text-2xl text-green-500";
-
+        // 1. Update Tampilan Player
+        document.getElementById('pTitle').innerText = title;
+        document.getElementById('mTitle').innerText = title;
+        document.getElementById('pArtist').innerText = artist;
+        document.getElementById('mArtist').innerText = artist;
+        document.getElementById('pCover').src = cover;
+        document.getElementById('mCover').src = cover;
+    
+        // 2. Efek Loading
+        const btn = document.getElementById('playBtn');
+        btn.className = "fa-solid fa-spinner animate-spin text-2xl text-green-500";
+    
+        // Daftar server Piped (kalau satu mati, dia coba yang lain)
+        const instances = [
+            'https://pipedapi.lunar.icu',
+            'https://api.piped.victr.me',
+            'https://pipedapi.kavin.rocks'
+        ];
+        
+        let audioUrl = null;
+    
+        // 3. Cari link audio langsung dari browser (Bypass Vercel)
+        for (let base of instances) {
             try {
-                const res = await fetch('/api/stream/' + id);
+                console.log("Mencoba ambil audio dari:", base);
+                const res = await fetch(`${base}/streams/${id}`);
                 const data = await res.json();
-                
-                if (data.url) {
-                    audio.src = data.url;
-                    audio.play().then(() => {
-                        isPlaying = true;
-                        updateUI();
-                    }).catch(e => {
-                        console.error("Playback error:", e);
-                        alert("Klik tombol play untuk memulai (kebijakan browser)");
-                        updateUI();
-                    });
-                } else {
-                    alert("YouTube memblokir permintaan ini.");
-                    updateUI();
+                if (data.audioStreams && data.audioStreams.length > 0) {
+                    audioUrl = data.audioStreams[0].url;
+                    break; 
                 }
-            } catch (err) {
-                alert("Gagal koneksi ke server!");
-                updateUI();
+            } catch (e) {
+                console.error("Server " + base + " gagal, mencoba yang lain...");
             }
         }
+    
+        if (audioUrl) {
+            audio.src = audioUrl;
+            audio.play().then(() => {
+                isPlaying = true;
+                updateUI();
+            }).catch(e => {
+                alert("Klik Play secara manual untuk memutar!");
+                updateUI();
+            });
+        } else {
+            alert("Semua server audio sedang sibuk. Coba lagu lain!");
+            updateUI();
+        }
+    }
 
     function togglePlay(e) {
         if(e) e.stopPropagation();
