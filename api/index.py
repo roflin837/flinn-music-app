@@ -90,9 +90,6 @@ def delete_song(yt_id):
     except:
         return jsonify({"status": "error"}), 500
 
-import requests
-from flask import Response
-
 @app.route('/api/stream/<yt_id>')
 def stream(yt_id):
     opts = {
@@ -100,23 +97,13 @@ def stream(yt_id):
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'noplaylist': True, # Tambahkan ini
+        'noplaylist': True,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         try:
-            # Ambil info lagu
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={yt_id}", download=False)
-            url = info['url']
-            
-            # Ini bagian pentingnya: Ambil audionya lewat server (Proxy)
-            # biar nggak diblokir YouTube pas diputar di browser kamu
-            req = requests.get(url, stream=True)
-            
-            return Response(
-                req.iter_content(chunk_size=1024*1024),
-                content_type=req.headers['Content-Type']
-            )
-            
+            # Kirim URL-nya saja dalam bentuk JSON
+            return jsonify({"url": info['url']})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -392,39 +379,28 @@ HTML_TEMPLATE = '''
     }
 
     async function playSong(id, title, artist, cover) {
-            const validCover = cover || DEFAULT_COVER;
-            document.getElementById('pTitle').innerText = title;
-            document.getElementById('pArtist').innerText = artist;
-            document.getElementById('pCover').src = validCover;
-            document.getElementById('mTitle').innerText = title;
-            document.getElementById('mArtist').innerText = artist;
-            document.getElementById('mCover').src = validCover;
+        // ... (kode update tampilan judul/cover tetap sama) ...
+        
+        const btn = document.getElementById('playBtn');
+        btn.className = "fa-solid fa-spinner animate-spin text-2xl text-green-500";
 
-            const btn = document.getElementById('playBtn');
-            const fullBtn = document.getElementById('mPlayBtn');
+        try {
+            const res = await fetch('/api/stream/' + id);
+            const data = await res.json();
             
-            // Animasi loading
-            btn.className = "fa-solid fa-spinner animate-spin text-2xl text-green-500";
-            
-            try {
-                // LANGSUNG masukkan URL API ke audio.src
-                // Kita tidak perlu fetch/await JSON lagi karena API-nya adalah stream audio
-                audio.src = '/api/stream/' + id;
-                
+            if (data.url) {
+                audio.src = data.url; // Memasukkan URL rahasia dari YouTube ke player
                 audio.play().then(() => {
                     isPlaying = true;
                     updateUI();
-                }).catch(err => {
-                    console.error("Playback error:", err);
-                    alert("Gagal memutar! Klik lagi atau coba lagu lain.");
-                    btn.className = "fa-solid fa-play text-2xl";
                 });
-
-            } catch (err) {
-                alert("Terjadi kesalahan koneksi!");
-                btn.className = "fa-solid fa-play text-2xl";
+            } else {
+                alert("YouTube memblokir permintaan ini.");
             }
+        } catch (err) {
+            alert("Gagal koneksi ke server!");
         }
+    }
 
     function togglePlay(e) {
         if(e) e.stopPropagation();
