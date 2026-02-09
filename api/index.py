@@ -82,21 +82,32 @@ def delete_song(yt_id):
     except:
         return jsonify({"status": "error"}), 500
 
+import requests
+from flask import Response
+
 @app.route('/api/stream/<yt_id>')
 def stream(yt_id):
-    # Opsi tambahan biar link lebih stabil
     opts = {
         'format': 'bestaudio/best',
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'cachedir': False,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         try:
+            # Ambil info lagu
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={yt_id}", download=False)
-            # Ambil URL langsung
-            return jsonify({"url": info['url']})
+            url = info['url']
+            
+            # Ini bagian pentingnya: Ambil audionya lewat server (Proxy)
+            # biar nggak diblokir YouTube pas diputar di browser kamu
+            req = requests.get(url, stream=True)
+            
+            return Response(
+                req.iter_content(chunk_size=1024*1024),
+                content_type=req.headers['Content-Type']
+            )
+            
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
