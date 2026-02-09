@@ -504,24 +504,45 @@ HTML_TEMPLATE = '''
     async function doSearch() {
         const q = document.getElementById('searchInput').value;
         if (!q) return;
+        
         const resultDiv = document.getElementById('searchResult');
         resultDiv.innerHTML = '<div class="flex justify-center py-10"><i class="fa-solid fa-spinner animate-spin text-3xl text-green-500"></i></div>';
-        const res = await fetch('/api/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ q: q })
-        });
-        const data = await res.json();
-        resultDiv.innerHTML = data.map(s => `
-            <div class="flex items-center gap-3 p-2 bg-zinc-900/30 rounded-lg cursor-pointer hover:bg-zinc-800 transition">
-                <img src="${s.cover}" onerror="this.src='${DEFAULT_COVER}'" class="w-12 h-12 rounded object-cover shadow">
-                <div class="flex-1 overflow-hidden" onclick="playSong('${s.yt_id}', '${s.title.replace(/'/g, "")}', '${s.artist.replace(/'/g, "")}', '${s.cover}')">
-                    <div class="text-sm font-bold truncate">${s.title}</div>
-                    <div class="text-[10px] text-zinc-400 truncate">${s.artist}</div>
-                </div>
-                <i class="fa-solid fa-plus-circle text-xl text-green-500 p-2 hover:scale-110" onclick='addSong(${JSON.stringify(s).replace(/'/g, "&apos;")})'></i>
-            </div>
-        `).join('');
+        
+        try {
+            // Kita cari lagu lewat Piped API (Langsung dari browser, bukan lewat Vercel)
+            const res = await fetch(`https://pipedapi.lunar.icu/search?q=${encodeURIComponent(q)}&filter=music_videos`);
+            const data = await res.json();
+            
+            if (!data.content || data.content.length === 0) {
+                resultDiv.innerHTML = '<p class="text-center text-zinc-500">Lagu gak ketemu, Flinn.</p>';
+                return;
+            }
+    
+            resultDiv.innerHTML = data.content.map(s => {
+                // Kita bungkus datanya biar formatnya sama kayak database lu
+                const songData = {
+                    title: s.title.replace(/'/g, ""),
+                    artist: s.uploaderName.replace(/'/g, ""),
+                    cover: s.thumbnail,
+                    yt_id: s.url.split("v=")[1],
+                    duration: s.duration >= 0 ? formatTime(s.duration) : "3:00"
+                };
+    
+                return `
+                    <div class="flex items-center gap-3 p-2 bg-zinc-900/30 rounded-lg cursor-pointer hover:bg-zinc-800 transition">
+                        <img src="${songData.cover}" onerror="this.src='${DEFAULT_COVER}'" class="w-12 h-12 rounded object-cover shadow">
+                        <div class="flex-1 overflow-hidden" onclick="playSong('${songData.yt_id}', '${songData.title}', '${songData.artist}', '${songData.cover}')">
+                            <div class="text-sm font-bold truncate">${songData.title}</div>
+                            <div class="text-[10px] text-zinc-400 truncate">${songData.artist}</div>
+                        </div>
+                        <i class="fa-solid fa-plus-circle text-xl text-green-500 p-2 hover:scale-110" 
+                           onclick='addSong(${JSON.stringify(songData).replace(/'/g, "&apos;")})'></i>
+                    </div>
+                `;
+            }).join('');
+        } catch (err) {
+            resultDiv.innerHTML = '<p class="text-center text-red-500">Gagal mencari lagu. Server sibuk!</p>';
+        }
     }
 
     async function addSong(s) {
