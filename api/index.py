@@ -31,35 +31,6 @@ def get_content():
         songs = conn.execute('SELECT * FROM songs ORDER BY id DESC').fetchall()
         return jsonify({"songs": [dict(s) for s in songs]})
 
-@app.route('/api/search', methods=['POST'])
-def search():
-    query = request.json.get('q')
-    if not query: return jsonify([])
-    search_query = f"ytsearch10:{query} official audio"
-    opts = {
-        'format': 'bestaudio/best',
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': True,
-    }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        try:
-            res = ydl.extract_info(search_query, download=False)
-            output = []
-            if 'entries' in res:
-                for info in res['entries']:
-                    if info:
-                        output.append({
-                            "title": info.get('title'),
-                            "artist": info.get('uploader') or "Artist",
-                            "cover": f"https://i.ytimg.com/vi/{info.get('id')}/mqdefault.jpg",
-                            "yt_id": info.get('id'),
-                            "duration": "3:00"
-                        })
-            return jsonify(output)
-        except:
-            return jsonify([])
-
 @app.route('/api/add', methods=['POST'])
 def add_song():
     s = request.json
