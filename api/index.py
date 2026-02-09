@@ -1,5 +1,5 @@
 from flask import Flask, render_template_string, jsonify, request
-import sqlite3, yt_dlp, os
+import sqlite3, yt_dlp, os, requests
 
 app = Flask(__name__)
 
@@ -92,21 +92,24 @@ def delete_song(yt_id):
 
 @app.route('/api/stream/<yt_id>')
 def stream(yt_id):
-    opts = {
-        'format': 'bestaudio/best',
-        'quiet': True,
-        'no_warnings': True,
-        'nocheckcertificate': True,
-        'noplaylist': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        try:
-            info = ydl.extract_info(f"https://www.youtube.com/watch?v={yt_id}", download=False)
-            # Kirim URL-nya saja dalam bentuk JSON
-            return jsonify({"url": info['url']})
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
+    try:
+        # Kita minta tolong ke instance Piped (bisa ganti-ganti kalau satu mati)
+        # Daftar instance: https://github.com/TeamPiped/Piped/wiki/Instances
+        piped_api = f"https://pipedapi.kavin.rocks/streams/{yt_id}"
+        
+        res = requests.get(piped_api, timeout=10)
+        data = res.json()
+        
+        # Cari link audio yang kualitasnya bagus (audioOnly)
+        audio_streams = [s for s in data.get('audioStreams', [])]
+        
+        if audio_streams:
+            # Ambil stream audio pertama yang ketemu
+            return jsonify({"url": audio_streams[0]['url']})
+        
+        return jsonify({"error": "No audio stream found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
