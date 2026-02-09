@@ -383,29 +383,39 @@ HTML_TEMPLATE = '''
     }
 
     async function playSong(id, title, artist, cover) {
-        const validCover = cover || DEFAULT_COVER;
-        document.getElementById('pTitle').innerText = title;
-        document.getElementById('pArtist').innerText = artist;
-        document.getElementById('pCover').src = validCover;
-        document.getElementById('mTitle').innerText = title;
-        document.getElementById('mArtist').innerText = artist;
-        document.getElementById('mCover').src = validCover;
+            const validCover = cover || DEFAULT_COVER;
+            document.getElementById('pTitle').innerText = title;
+            document.getElementById('pArtist').innerText = artist;
+            document.getElementById('pCover').src = validCover;
+            document.getElementById('mTitle').innerText = title;
+            document.getElementById('mArtist').innerText = artist;
+            document.getElementById('mCover').src = validCover;
 
-        const btn = document.getElementById('playBtn');
-        btn.className = "fa-solid fa-spinner animate-spin text-2xl text-green-500";
-        
-        try {
-            const res = await fetch('/api/stream/' + id);
-            const data = await res.json();
-            audio.src = data.url;
-            audio.play();
-            isPlaying = true;
-            updateUI();
-        } catch (err) {
-            alert("Gagal memutar!");
-            btn.className = "fa-solid fa-play text-2xl";
+            const btn = document.getElementById('playBtn');
+            const fullBtn = document.getElementById('mPlayBtn');
+            
+            // Animasi loading
+            btn.className = "fa-solid fa-spinner animate-spin text-2xl text-green-500";
+            
+            try {
+                // LANGSUNG masukkan URL API ke audio.src
+                // Kita tidak perlu fetch/await JSON lagi karena API-nya adalah stream audio
+                audio.src = '/api/stream/' + id;
+                
+                audio.play().then(() => {
+                    isPlaying = true;
+                    updateUI();
+                }).catch(err => {
+                    console.error("Playback error:", err);
+                    alert("Gagal memutar! Klik lagi atau coba lagu lain.");
+                    btn.className = "fa-solid fa-play text-2xl";
+                });
+
+            } catch (err) {
+                alert("Terjadi kesalahan koneksi!");
+                btn.className = "fa-solid fa-play text-2xl";
+            }
         }
-    }
 
     function togglePlay(e) {
         if(e) e.stopPropagation();
