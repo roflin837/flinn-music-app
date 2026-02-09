@@ -84,10 +84,21 @@ def delete_song(yt_id):
 
 @app.route('/api/stream/<yt_id>')
 def stream(yt_id):
-    opts = {'format': 'bestaudio/best', 'quiet': True}
+    # Opsi tambahan biar link lebih stabil
+    opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+        'no_warnings': True,
+        'nocheckcertificate': True,
+        'cachedir': False,
+    }
     with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(f"https://www.youtube.com/watch?v={yt_id}", download=False)
-        return jsonify({"url": info['url']})
+        try:
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={yt_id}", download=False)
+            # Ambil URL langsung
+            return jsonify({"url": info['url']})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
