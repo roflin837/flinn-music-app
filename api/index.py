@@ -98,6 +98,7 @@ def stream(yt_id):
         'no_warnings': True,
         'nocheckcertificate': True,
         'noplaylist': True,
+        'source_address': '0.0.0.0', # Menghindari beberapa masalah koneksi di server
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         try:
@@ -379,28 +380,42 @@ HTML_TEMPLATE = '''
     }
 
     async function playSong(id, title, artist, cover) {
-        // ... (kode update tampilan judul/cover tetap sama) ...
-        
-        const btn = document.getElementById('playBtn');
-        btn.className = "fa-solid fa-spinner animate-spin text-2xl text-green-500";
+            // 1. Update Tampilan Player (Bar bawah dan Modal Full)
+            document.getElementById('pTitle').innerText = title;
+            document.getElementById('mTitle').innerText = title;
+            document.getElementById('pArtist').innerText = artist;
+            document.getElementById('mArtist').innerText = artist;
+            document.getElementById('pCover').src = cover;
+            document.getElementById('mCover').src = cover;
 
-        try {
-            const res = await fetch('/api/stream/' + id);
-            const data = await res.json();
-            
-            if (data.url) {
-                audio.src = data.url; // Memasukkan URL rahasia dari YouTube ke player
-                audio.play().then(() => {
-                    isPlaying = true;
+            // 2. Tampilkan Loading
+            const btn = document.getElementById('playBtn');
+            const mBtn = document.getElementById('mPlayBtn');
+            btn.className = "fa-solid fa-spinner animate-spin text-2xl text-green-500";
+
+            try {
+                const res = await fetch('/api/stream/' + id);
+                const data = await res.json();
+                
+                if (data.url) {
+                    audio.src = data.url;
+                    audio.play().then(() => {
+                        isPlaying = true;
+                        updateUI();
+                    }).catch(e => {
+                        console.error("Playback error:", e);
+                        alert("Klik tombol play untuk memulai (kebijakan browser)");
+                        updateUI();
+                    });
+                } else {
+                    alert("YouTube memblokir permintaan ini.");
                     updateUI();
-                });
-            } else {
-                alert("YouTube memblokir permintaan ini.");
+                }
+            } catch (err) {
+                alert("Gagal koneksi ke server!");
+                updateUI();
             }
-        } catch (err) {
-            alert("Gagal koneksi ke server!");
         }
-    }
 
     function togglePlay(e) {
         if(e) e.stopPropagation();
