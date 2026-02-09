@@ -100,6 +100,7 @@ def stream(yt_id):
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
+        'noplaylist': True, # Tambahkan ini
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         try:
