@@ -1,320 +1,495 @@
 from flask import Flask, render_template_string, jsonify, request
-import sqlite3, yt_dlp, requests, os, json
+import sqlite3, yt_dlp, os
 
 app = Flask(__name__)
 
-# Flinn, kita simpan di /tmp untuk operasional, tapi kita backup ke folder lokal
-DB_NAME = '/tmp/flinn_enterprise.db'
-BACKUP_FILE = 'database_backup.json' # File ini aman di GitHub/Vercel (Read-only)
+# Database Config
+IS_VERCEL = "VERCEL" in os.environ
+DB_PATH = '/tmp/flinn_music.db' if IS_VERCEL else 'flinn_music.db'
 
 def get_db():
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
-    # Cek apakah DB sudah ada di /tmp, jika belum, coba restore dari backup
-    db_exists = os.path.exists(DB_NAME)
-    
     with get_db() as conn:
-        conn.execute('''CREATE TABLE IF NOT EXISTS playlists (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, description TEXT)''')
         conn.execute('''CREATE TABLE IF NOT EXISTS songs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, artist TEXT, 
-            cover TEXT, duration TEXT, yt_id TEXT, pid INTEGER,
-            is_favorite INTEGER DEFAULT 0,
-            FOREIGN KEY(pid) REFERENCES playlists(id) ON DELETE CASCADE)''')
-        
-        conn.execute("INSERT OR IGNORE INTO playlists (id, name, description) VALUES (1, 'Koleksi Utama', 'Default')")
-        conn.execute("INSERT OR IGNORE INTO playlists (id, name, description) VALUES (99, 'Lagu Favorit', 'Liked')")
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            title TEXT, artist TEXT, cover TEXT, 
+            duration TEXT, yt_id TEXT UNIQUE)''')
         conn.commit()
-
-    # Jika baru nyala (DB di /tmp kosong), isi dari backup JSON
-    if not db_exists and os.path.exists(BACKUP_FILE):
-        restore_data()
-
-def restore_data():
-    try:
-        with open(BACKUP_FILE, 'r') as f:
-            data = json.load(f)
-            with get_db() as conn:
-                for s in data['songs']:
-                    conn.execute('''INSERT OR IGNORE INTO songs (title, artist, cover, duration, yt_id, pid, is_favorite) 
-                                 VALUES (?,?,?,?,?,?,?)''', (s['title'], s['artist'], s['cover'], s['duration'], s['yt_id'], s['pid'], s['is_favorite']))
-                conn.commit()
-    except: pass
-
-# --- UI & LOGIC ---
-@app.route('/api/content')
-def get_content():
-    mode = request.args.get('mode', 'home')
-    pid = request.args.get('pid')
-    init_db()
-    with get_db() as conn:
-        if mode == 'liked':
-            songs = conn.execute('SELECT * FROM songs WHERE is_favorite = 1').fetchall()
-            title = "Lagu Favorit"
-        elif mode == 'playlist' and pid:
-            songs = conn.execute('SELECT * FROM songs WHERE pid = ?', (pid,)).fetchall()
-            res = conn.execute('SELECT name FROM playlists WHERE id = ?', (pid,)).fetchone()
-            title = res['name'] if res else "Playlist"
-        else:
-            songs = conn.execute('SELECT * FROM songs ORDER BY id DESC').fetchall()
-            title = "Koleksi Flinn"
-        
-        return jsonify({"songs": [dict(s) for s in songs], "title": title})
-
-# ... (Route lainnya seperti stream, search, dll tetap sama dengan kode kamu) ...
-@app.route('/api/stream/<yt_id>')
-def api_stream(yt_id):
-    opts = {'format': 'bestaudio/best', 'quiet': True, 'noplaylist': True}
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        try:
-            info = ydl.extract_info(f"https://www.youtube.com/watch?v={yt_id}", download=False)
-            return jsonify({"url": info['url']})
-        except: return jsonify({"error": "Error"}), 404
-
-@app.route('/api/search_suggestions', methods=['POST'])
-def search_suggestions():
-    q = request.json.get('q')
-    opts = {'default_search': 'ytsearch10', 'quiet': True, 'noplaylist': True}
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        res = ydl.extract_info(q, download=False)
-        output = []
-        for info in res.get('entries', []):
-            output.append({
-                "title": info.get('title'), "artist": info.get('uploader'),
-                "cover": info.get('thumbnail'), "duration": str(info.get('duration')),
-                "yt_id": info.get('id')
-            })
-        return jsonify(output)
 
 @app.route('/')
 def index():
     init_db()
     return render_template_string(HTML_TEMPLATE)
 
-# HTML TEMPLATE DENGAN PERBAIKAN RESPONSIVE HP
+@app.route('/api/content')
+def get_content():
+    with get_db() as conn:
+        songs = conn.execute('SELECT * FROM songs ORDER BY id DESC').fetchall()
+        return jsonify({"songs": [dict(s) for s in songs]})
+
+@app.route('/api/search', methods=['POST'])
+def search():
+    query = request.json.get('q')
+    if not query: return jsonify([])
+    search_query = f"ytsearch10:{query} official audio"
+    opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': True,
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        try:
+            res = ydl.extract_info(search_query, download=False)
+            output = []
+            if 'entries' in res:
+                for info in res['entries']:
+                    if info:
+                        output.append({
+                            "title": info.get('title'),
+                            "artist": info.get('uploader') or "Artist",
+                            "cover": f"https://i.ytimg.com/vi/{info.get('id')}/mqdefault.jpg",
+                            "yt_id": info.get('id'),
+                            "duration": "3:00"
+                        })
+            return jsonify(output)
+        except:
+            return jsonify([])
+
+@app.route('/api/add', methods=['POST'])
+def add_song():
+    s = request.json
+    try:
+        with get_db() as conn:
+            conn.execute('INSERT OR IGNORE INTO songs (title, artist, cover, duration, yt_id) VALUES (?,?,?,?,?)',
+                         (s['title'], s['artist'], s['cover'], s['duration'], s['yt_id']))
+            conn.commit()
+        return jsonify({"status": "success"})
+    except:
+        return jsonify({"status": "error"}), 500
+    
+@app.route('/api/delete/<yt_id>', methods=['DELETE'])
+def delete_song(yt_id):
+    try:
+        with get_db() as conn:
+            conn.execute('DELETE FROM songs WHERE yt_id = ?', (yt_id,))
+            conn.commit()
+        return jsonify({"status": "deleted"})
+    except:
+        return jsonify({"status": "error"}), 500
+
+@app.route('/api/stream/<yt_id>')
+def stream(yt_id):
+    opts = {'format': 'bestaudio/best', 'quiet': True}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(f"https://www.youtube.com/watch?v={yt_id}", download=False)
+        return jsonify({"url": info['url']})
+
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Flinn-ify Enterprise</title>
+    <title>Music Hub - Flinn</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&display=swap');
-        :root { --spotify-green: #1db954; --bg-main: #121212; }
-        body { background: #000; color: #fff; font-family: 'Plus Jakarta Sans', sans-serif; margin: 0; overflow: hidden; }
-
-        /* Mobile Adjustments */
-        .app-shell { 
-            display: grid; 
-            grid-template-areas: "sidebar main" "player player";
-            grid-template-columns: 280px 1fr;
-            grid-template-rows: 1fr 100px;
-            height: 100vh;
-        }
-
-        @media (max-width: 768px) {
-            .app-shell {
-                grid-template-areas: "main" "player";
-                grid-template-columns: 1fr;
-                grid-template-rows: 1fr 140px; /* Player lebih tinggi di HP */
-            }
-            .sidebar { display: none; }
-            .mobile-nav { display: flex !important; }
-            .main-content { padding-bottom: 80px; }
-            #mainGrid { grid-template-columns: repeat(2, 1fr) !important; gap: 12px; padding: 15px; }
-            .search-input { width: 100% !important; }
-        }
-
-        .mobile-nav {
-            display: none; position: fixed; bottom: 100px; left: 0; right: 0;
-            background: linear-gradient(transparent, #000); height: 60px;
-            justify-content: space-around; align-items: center; z-index: 100;
-        }
-
-        .main-content { grid-area: main; overflow-y: auto; background: linear-gradient(#1e1e1e 0%, #121212 30%); }
-        .player-bar { 
-            grid-area: player; background: #000; border-top: 1px solid #222; 
-            display: flex; align-items: center; justify-content: space-between; padding: 0 15px;
-        }
-        
-        .music-card { background: #181818; padding: 12px; border-radius: 8px; transition: 0.3s; cursor: pointer; }
-        .music-card:hover { background: #282828; }
-        .music-card img { width: 100%; aspect-ratio: 1; border-radius: 4px; object-fit: cover; }
-        
-        /* Progress Bar */
-        .prog-bg { width: 100%; height: 4px; background: #444; border-radius: 2px; cursor: pointer; }
-        .prog-fill { height: 100%; background: #fff; width: 0%; border-radius: 2px; }
-    </style>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;600;700;800&display=swap');
+    body { background-color: #000; color: white; font-family: 'Figtree', sans-serif; margin: 0; overflow: hidden; cursor: default; }
+    .main-content { height: 100vh; overflow-y: auto; padding: 20px 16px 180px 16px; background: linear-gradient(to bottom, #1a1a1a 0%, #000 35%); }
+    .player-bar { position: fixed; bottom: 80px; left: 8px; right: 8px; background: #282828; border-radius: 8px; padding: 8px 12px; display: flex; align-items: center; z-index: 100; cursor: pointer; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; height: 70px; background: rgba(0,0,0,0.95); display: flex; justify-content: space-around; align-items: center; border-top: 1px solid #111; z-index: 101; }
+    .nav-item { display: flex; flex-direction: column; align-items: center; color: #b3b3b3; font-size: 10px; gap: 4px; cursor: pointer; }
+    .nav-item.active { color: white; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    
+    .menu-card, .cat-card, button, i, .clickable { cursor: pointer; }
+    .menu-card { background: rgba(255,255,255,0.1); transition: all 0.2s; }
+    .menu-card:hover { background: rgba(255,255,255,0.15); transform: translateY(-1px); }
+    .menu-card:active { background: rgba(255,255,255,0.2); transform: scale(0.98); }
+    
+    .cat-card { transition: transform 0.2s; }
+    .cat-card:hover { transform: scale(1.05); }
+</style>
 </head>
 <body>
 
-    <div class="app-shell">
-        <aside class="sidebar p-4 flex flex-col gap-4 bg-black">
-            <div class="bg-zinc-900 rounded-xl p-4">
-                <div class="flex items-center gap-4 p-3 text-white font-bold cursor-pointer" onclick="routeTo('home')"><i class="fa-solid fa-house"></i> Home</div>
-                <div class="flex items-center gap-4 p-3 text-zinc-400 font-bold cursor-pointer" onclick="routeTo('search')"><i class="fa-solid fa-magnifying-glass"></i> Search</div>
-            </div>
-            <div class="bg-zinc-900 rounded-xl p-4 flex-1 overflow-y-auto" id="sidebarPlaylists">
-                </div>
-        </aside>
-
-        <main class="main-content" id="scrollArea">
-            <div id="homeView" class="p-4 md:p-8">
-                <h1 id="sectionTitle" class="text-2xl md:text-4xl font-extrabold mb-6 mt-4">Koleksi Flinn</h1>
-                <div id="mainGrid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4"></div>
-            </div>
-
-            <div id="searchView" class="p-4 md:p-8" style="display:none">
-                <input type="text" id="searchInput" placeholder="Cari lagu..." class="w-full bg-zinc-800 p-4 rounded-full outline-none mb-8">
-                <div id="searchResultGrid" class="space-y-4"></div>
-            </div>
-        </main>
-
-        <footer class="player-bar flex-col md:flex-row gap-2 py-2">
-            <div class="flex items-center gap-3 w-full md:w-[30%]">
-                <img id="trackCover" src="" class="w-12 h-12 rounded bg-zinc-800">
-                <div class="overflow-hidden">
-                    <div id="trackTitle" class="text-sm font-bold truncate">Pilih Lagu</div>
-                    <div id="trackArtist" class="text-xs text-zinc-400 truncate">Flinn Music</div>
+<div class="app-shell">
+    <main class="main-content no-scrollbar">
+        <div id="homeView">
+            <div class="flex justify-between items-center mb-6 mt-4">
+                <h1 class="text-2xl font-bold italic tracking-tight">Halo, Flinn!</h1>
+                <div class="flex gap-4 text-xl">
+                    <i class="fa-regular fa-bell cursor-pointer hover:text-green-500 transition" onclick="alert('Belum ada notifikasi baru untuk Flinn!')"></i>
+                    <i class="fa-solid fa-clock-rotate-left cursor-pointer hover:text-green-500 transition" onclick="changeTab('library', document.querySelectorAll('.nav-item')[2])"></i>
+                    <i class="fa-solid fa-gear cursor-pointer hover:text-green-500 transition" onclick="alert('Menu Pengaturan akan segera hadir!')"></i>
                 </div>
             </div>
 
-            <div class="flex flex-col items-center w-full md:w-[40%] gap-1">
-                <div class="flex items-center gap-6">
-                    <i class="fa-solid fa-backward-step cursor-pointer" onclick="playPrev()"></i>
-                    <button id="playBtn" class="bg-white text-black w-10 h-10 rounded-full flex items-center justify-center">
-                        <i class="fa-solid fa-play"></i>
-                    </button>
-                    <i class="fa-solid fa-forward-step cursor-pointer" onclick="playNext()"></i>
+            <div class="flex gap-2 mb-6 overflow-x-auto no-scrollbar">
+                <span class="px-4 py-1.5 bg-green-500 text-black rounded-full text-[11px] font-semibold cursor-pointer active:scale-95 transition" onclick="alert('Menampilkan semua Musik')">Music</span>
+                <span class="px-4 py-1.5 bg-zinc-800 rounded-full text-[11px] font-semibold cursor-pointer text-zinc-300 active:scale-95 transition" onclick="quickSearch('Podcast Indonesia')">Podcasts</span>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 mb-8">
+                <div class="menu-card flex items-center rounded-md overflow-hidden h-14" onclick="changeTab('library', document.querySelectorAll('.nav-item')[2])">
+                    <div class="w-14 h-full bg-gradient-to-br from-indigo-700 to-purple-400 flex items-center justify-center shadow-lg">
+                        <i class="fa-solid fa-heart text-white text-lg"></i>
+                    </div>
+                    <span class="ml-3 text-[11px] font-bold">Liked Songs</span>
                 </div>
-                <div class="flex items-center gap-2 w-full px-4">
-                    <span id="timeCurr" class="text-[10px]">0:00</span>
-                    <div class="prog-bg" id="progLine"><div id="progFill" class="prog-fill"></div></div>
-                    <span id="timeTotal" class="text-[10px]">0:00</span>
+
+                <div class="menu-card flex items-center rounded-md overflow-hidden h-14" onclick="quickSearch('On Repeat')">
+                    <img src="https://images.unsplash.com/photo-1493225255756-d9584f8606e9?w=100" class="w-14 h-full object-cover">
+                    <span class="ml-3 text-[11px] font-bold">On Repeat</span>
+                </div>
+
+                <div class="menu-card flex items-center rounded-md overflow-hidden h-14" onclick="quickSearch('Daily Mix 1')">
+                    <img src="https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=100" class="w-14 h-full object-cover">
+                    <span class="ml-3 text-[11px] font-bold">Daily Mix 1</span>
+                </div>
+
+                <div class="menu-card flex items-center rounded-md overflow-hidden h-14" onclick="quickSearch('Chill Mix')">
+                    <img src="https://images.unsplash.com/photo-1494232410401-ad00d5433cfa?w=200&h=200&fit=crop" class="w-14 h-full object-cover">
+                    <span class="ml-3 text-[11px] font-bold">Chill Mix</span>
+                </div>
+
+                <div class="menu-card flex items-center rounded-md overflow-hidden h-14" onclick="quickSearch('New Release Music')">
+                    <img src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&h=200&fit=crop" class="w-14 h-full object-cover">
+                    <span class="ml-3 text-[11px] font-bold">New Release</span>
+                </div>
+
+                <div class="menu-card flex items-center rounded-md overflow-hidden h-14" onclick="quickSearch('Gaming Beats')">
+                    <img src="https://images.unsplash.com/photo-1542751371-adc38448a05e?w=100" class="w-14 h-full object-cover">
+                    <span class="ml-3 text-[11px] font-bold">Gaming Beat</span>
                 </div>
             </div>
 
-            <div class="hidden md:flex items-center justify-end w-[30%] gap-3">
-                <i class="fa-solid fa-volume-high text-xs text-zinc-400"></i>
-                <input type="range" id="volRange" min="0" max="1" step="0.1" value="1" class="w-24 accent-white">
+            <div class="mb-8">
+                <h2 class="text-xl font-bold mb-4">Recommended for you</h2>
+                <div class="relative w-full aspect-[16/9] rounded-xl overflow-hidden shadow-2xl cursor-pointer" onclick="quickSearch('Deep Focus Instrument')">
+                    <img src="https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=1000&auto=format&fit=crop" class="w-full h-full object-cover">
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent p-5 flex flex-col justify-end">
+                        <span class="text-[10px] font-black text-green-400 uppercase tracking-widest mb-1">Focus Mode</span>
+                        <h3 class="text-3xl font-black leading-none mb-1">Deep Focus</h3>
+                        <p class="text-xs text-zinc-300 opacity-80">Tetap tenang dan produktif dengan instrumen pilihan.</p>
+                    </div>
+                </div>
             </div>
-        </footer>
 
-        <nav class="mobile-nav">
-            <div onclick="routeTo('home')" class="flex flex-col items-center gap-1"><i class="fa-solid fa-house"></i><span class="text-[10px]">Home</span></div>
-            <div onclick="routeTo('search')" class="flex flex-col items-center gap-1 text-zinc-400"><i class="fa-solid fa-magnifying-glass"></i><span class="text-[10px]">Cari</span></div>
-            <div onclick="routeTo('liked')" class="flex flex-col items-center gap-1 text-zinc-400"><i class="fa-solid fa-heart"></i><span class="text-[10px]">Favorit</span></div>
-        </nav>
+            <h2 class="text-xl font-bold mb-4">Your Top Categories</h2>
+            <div class="flex gap-4 overflow-x-auto no-scrollbar pb-10">
+                <div class="cat-card w-32 h-32 flex-shrink-0 bg-pink-600 rounded-lg p-3 relative overflow-hidden" onclick="quickSearch('Pop Music')">
+                    <span class="font-bold text-sm">Pop</span>
+                    <img src="https://picsum.photos/id/1025/150/150" 
+                        class="w-16 h-16 absolute -right-2 -bottom-2 rotate-[25deg] shadow-lg object-cover rounded-md bg-zinc-800">
+                </div>
+
+                <div class="cat-card w-32 h-32 flex-shrink-0 bg-orange-600 rounded-lg p-3 relative overflow-hidden" onclick="quickSearch('Rock Music')">
+                    <span class="font-bold text-sm">Rock</span>
+                    <img src="https://picsum.photos/id/1082/150/150" 
+                        class="w-16 h-16 absolute -right-2 -bottom-2 rotate-[25deg] shadow-lg object-cover rounded-md bg-zinc-800">
+                </div>
+
+                <div class="cat-card w-32 h-32 flex-shrink-0 bg-blue-700 rounded-lg p-3 relative overflow-hidden" onclick="quickSearch('Hip-Hop Music')">
+                    <span class="font-bold text-sm">Hip-Hop</span>
+                    <img src="https://picsum.photos/id/1031/150/150" 
+                        class="w-16 h-16 absolute -right-2 -bottom-2 rotate-[25deg] shadow-lg object-cover rounded-md bg-zinc-800">
+                </div>
+
+                <div class="cat-card w-32 h-32 flex-shrink-0 bg-green-600 rounded-lg p-3 relative overflow-hidden" onclick="quickSearch('Indie Indonesia')">
+                    <span class="font-bold text-sm">Indie</span>
+                    <img src="https://picsum.photos/id/1075/150/150" 
+                        class="w-16 h-16 absolute -right-2 -bottom-2 rotate-[25deg] shadow-lg object-cover rounded-md bg-zinc-800">
+                </div>
+            </div>
+        </div>
+
+        <div id="searchView" class="hidden">
+            <h1 class="text-3xl font-bold mb-6">Cari</h1>
+            <div class="relative mb-6">
+                <input type="text" id="searchInput" autocomplete="off" placeholder="Mau dengerin apa?" 
+                    class="w-full p-4 rounded-full bg-zinc-800 text-white font-medium outline-none border border-transparent focus:border-zinc-500">
+                <button onclick="doSearch()" class="absolute right-5 top-4 text-zinc-400">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                </button>
+            </div>
+            <div id="searchResult" class="space-y-2"></div>
+        </div>
+
+        <div id="libraryView" class="hidden">
+            <h1 class="text-2xl font-bold mb-6 mt-4">Koleksi Kamu</h1>
+            <div id="libraryList" class="space-y-4"></div>
+        </div>
+    </main>
+
+    <div class="player-bar" onclick="if(event.target.id !== 'playBtn') toggleNowPlaying()">
+        <img id="pCover" src="https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=100" 
+             onerror="this.src='https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=100'"
+             class="w-10 h-10 rounded shadow-md object-cover">
+        <div class="flex-1 ml-3 overflow-hidden">
+            <div id="pTitle" class="text-sm font-bold truncate">Pilih Lagu</div>
+            <div id="pArtist" class="text-[11px] text-zinc-400 truncate">Flinn Music</div>
+        </div>
+        <div class="flex items-center gap-4">
+             <i class="fa-solid fa-play text-2xl" id="playBtn" onclick="togglePlay(event)"></i>
+        </div>
     </div>
 
-    <audio id="audioCore"></audio>
-
-    <script>
-        const audio = document.getElementById('audioCore');
-        const playBtn = document.getElementById('playBtn');
-        let currentQueue = [];
-        let activeIdx = -1;
-
-        async function routeTo(dest, pid=null) {
-            document.getElementById('homeView').style.display = dest === 'search' ? 'none' : 'block';
-            document.getElementById('searchView').style.display = dest === 'search' ? 'block' : 'none';
-            if(dest !== 'search') loadContent(dest, pid);
-        }
-
-        async function loadContent(mode, pid=null) {
-            const res = await fetch(`/api/content?mode=${mode}${pid ? '&pid='+pid : ''}`);
-            const data = await res.json();
-            currentQueue = data.songs;
-            document.getElementById('sectionTitle').innerText = data.title;
-            document.getElementById('mainGrid').innerHTML = data.songs.map((s, i) => `
-                <div class="music-card" onclick="playAt(${i})">
-                    <img src="${s.cover}">
-                    <div class="text-sm font-bold truncate mt-2">${s.title}</div>
-                    <div class="text-xs text-zinc-500 truncate">${s.artist}</div>
-                </div>
-            `).join('');
-        }
-
-        async function playAt(idx) {
-            if(idx < 0 || idx >= currentQueue.length) return;
-            activeIdx = idx;
-            const song = currentQueue[idx];
+    <div id="nowPlayingModal" class="fixed inset-0 bg-zinc-950 z-[200] translate-y-full transition-transform duration-300 flex flex-col p-8 overflow-hidden">
+            <div class="flex justify-between items-center mb-6">
+                <i class="fa-solid fa-chevron-down text-xl p-2 cursor-pointer" onclick="toggleNowPlaying()"></i>
+                <span class="text-[10px] font-bold tracking-widest uppercase opacity-70">Now Playing</span>
+                <i class="fa-solid fa-ellipsis-vertical text-xl p-2 cursor-pointer" onclick="showMore()"></i>
+            </div>
             
-            document.getElementById('trackTitle').innerText = song.title;
-            document.getElementById('trackArtist').innerText = song.artist;
-            document.getElementById('trackCover').src = song.cover;
-            playBtn.innerHTML = '<i class="fa-solid fa-circle-notch animate-spin"></i>';
+            <div class="flex-1 flex flex-col items-center justify-center">
+                <div class="w-full max-w-[320px] aspect-square mb-8 shadow-2xl">
+                    <img id="mCover" src="https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500" 
+                         onerror="this.src='https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500'"
+                         class="w-full h-full object-cover rounded-lg shadow-black/50 shadow-2xl">
+                </div>
 
-            const res = await fetch('/api/stream/' + song.yt_id);
+                <div class="w-full flex justify-between items-center mb-6">
+                    <div class="overflow-hidden pr-4">
+                        <h2 id="mTitle" class="text-xl font-bold truncate">Judul Lagu</h2>
+                        <p id="mArtist" class="text-zinc-400 text-sm">Nama Artis</p>
+                    </div>
+                    <i class="fa-regular fa-heart text-2xl text-zinc-400 cursor-pointer" onclick="toggleLike(this)"></i>
+                </div>
+
+                <div id="progCont" class="w-full bg-zinc-800 h-[4px] rounded-full mb-2 cursor-pointer relative">
+                    <div id="progBar" class="bg-white h-full w-0 rounded-full relative pointer-events-none">
+                        <div class="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg"></div>
+                    </div>
+                </div>
+                <div class="w-full flex justify-between text-[10px] text-zinc-500 mb-8 font-medium">
+                    <span id="currTime">0:00</span>
+                    <span id="totalTime">0:00</span>
+                </div>
+
+                <div class="w-full flex justify-between items-center px-2">
+                    <i class="fa-solid fa-shuffle text-zinc-600 text-lg cursor-pointer" onclick="toggleShuffle(this)"></i>
+                    <i class="fa-solid fa-backward-step text-2xl cursor-pointer" onclick="prevSong()"></i>
+                    <i class="fa-solid fa-circle-play text-7xl text-white cursor-pointer" id="mPlayBtn" onclick="togglePlay(event)"></i>
+                    <i class="fa-solid fa-forward-step text-2xl cursor-pointer" onclick="nextSong()"></i>
+                    <i class="fa-solid fa-repeat text-zinc-600 text-lg cursor-pointer" onclick="toggleRepeat(this)"></i>
+                </div>
+            </div>
+    </div>
+
+    <nav class="bottom-nav">
+        <div class="nav-item active" onclick="changeTab('home', this)">
+            <i class="fa-solid fa-house text-xl"></i>
+            <span>Home</span>
+        </div>
+        <div class="nav-item" onclick="changeTab('search', this)">
+            <i class="fa-solid fa-magnifying-glass text-xl"></i>
+            <span>Cari</span>
+        </div>
+        <div class="nav-item" onclick="changeTab('library', this)">
+            <i class="fa-solid fa-book text-xl"></i>
+            <span>Library</span>
+        </div>
+    </nav>
+</div>
+
+<script>
+    const audio = new Audio();
+    let isPlaying = false;
+    let isRepeat = false;
+    let isShuffle = false;
+    let currentPlaylist = [];
+    let currentIndex = -1;
+
+    const DEFAULT_COVER = "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500";
+
+    function quickSearch(keyword) {
+        const searchNavItem = document.querySelectorAll('.nav-item')[1];
+        changeTab('search', searchNavItem);
+        const input = document.getElementById('searchInput');
+        input.value = keyword;
+        doSearch();
+    }
+
+    function toggleNowPlaying() {
+        document.getElementById('nowPlayingModal').classList.toggle('translate-y-full');
+    }
+
+    function changeTab(tab, el) {
+        document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+        el.classList.add('active');
+        document.getElementById('homeView').classList.add('hidden');
+        document.getElementById('searchView').classList.add('hidden');
+        document.getElementById('libraryView').classList.add('hidden');
+        if(tab === 'home') { document.getElementById('homeView').classList.remove('hidden'); }
+        else if(tab === 'search') { document.getElementById('searchView').classList.remove('hidden'); }
+        else if(tab === 'library') { document.getElementById('libraryView').classList.remove('hidden'); renderLibrary(); }
+    }
+
+    async function renderLibrary() {
+        const res = await fetch('/api/content');
+        const data = await res.json();
+        currentPlaylist = data.songs;
+        const libList = document.getElementById('libraryList');
+        if(data.songs.length === 0) {
+            libList.innerHTML = '<p class="text-zinc-500 text-center py-10 text-sm italic">Library masih kosong nih.</p>';
+            return;
+        }
+        libList.innerHTML = data.songs.map((s, index) => `
+            <div class="flex items-center gap-3 p-2 active:bg-zinc-800 rounded-md cursor-pointer transition">
+                <img src="${s.cover}" onerror="this.src='${DEFAULT_COVER}'" class="w-12 h-12 rounded object-cover" onclick="playSongByIndex(${index})">
+                <div class="flex-1 overflow-hidden" onclick="playSongByIndex(${index})">
+                    <div class="text-sm font-bold truncate">${s.title}</div>
+                    <div class="text-[11px] text-zinc-400 truncate">${s.artist}</div>
+                </div>
+                <i class="fa-solid fa-trash text-zinc-600 p-2 hover:text-red-500 transition" onclick="deleteSong('${s.yt_id}')"></i>
+            </div>
+        `).join('');
+    }
+
+    async function playSongByIndex(index) {
+        if (index < 0 || index >= currentPlaylist.length) return;
+        currentIndex = index;
+        const s = currentPlaylist[index];
+        playSong(s.yt_id, s.title, s.artist, s.cover);
+    }
+
+    async function playSong(id, title, artist, cover) {
+        const validCover = cover || DEFAULT_COVER;
+        document.getElementById('pTitle').innerText = title;
+        document.getElementById('pArtist').innerText = artist;
+        document.getElementById('pCover').src = validCover;
+        document.getElementById('mTitle').innerText = title;
+        document.getElementById('mArtist').innerText = artist;
+        document.getElementById('mCover').src = validCover;
+
+        const btn = document.getElementById('playBtn');
+        btn.className = "fa-solid fa-spinner animate-spin text-2xl text-green-500";
+        
+        try {
+            const res = await fetch('/api/stream/' + id);
             const data = await res.json();
             audio.src = data.url;
             audio.play();
-            playBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
+            isPlaying = true;
+            updateUI();
+        } catch (err) {
+            alert("Gagal memutar!");
+            btn.className = "fa-solid fa-play text-2xl";
         }
+    }
 
-        playBtn.onclick = () => {
-            if(!audio.src) return;
-            if(audio.paused) { audio.play(); playBtn.innerHTML = '<i class="fa-solid fa-pause"></i>'; }
-            else { audio.pause(); playBtn.innerHTML = '<i class="fa-solid fa-play"></i>'; }
+    function togglePlay(e) {
+        if(e) e.stopPropagation();
+        if(!audio.src) return;
+        isPlaying ? audio.pause() : audio.play();
+        isPlaying = !isPlaying;
+        updateUI();
+    }
+
+    function updateUI() {
+        const miniBtn = document.getElementById('playBtn');
+        const fullBtn = document.getElementById('mPlayBtn');
+        miniBtn.className = isPlaying ? "fa-solid fa-pause text-2xl cursor-pointer" : "fa-solid fa-play text-2xl cursor-pointer";
+        fullBtn.className = isPlaying ? "fa-solid fa-circle-pause text-6xl cursor-pointer" : "fa-solid fa-circle-play text-6xl cursor-pointer";
+    }
+
+    function nextSong() { 
+        if(currentPlaylist.length === 0) return;
+        if(isShuffle) {
+            playSongByIndex(Math.floor(Math.random() * currentPlaylist.length));
+        } else {
+            currentIndex < currentPlaylist.length - 1 ? playSongByIndex(currentIndex + 1) : playSongByIndex(0);
         }
+    }
+    
+    function prevSong() { 
+        if(currentPlaylist.length === 0) return;
+        currentIndex > 0 ? playSongByIndex(currentIndex - 1) : playSongByIndex(currentPlaylist.length - 1); 
+    }
 
-        audio.ontimeupdate = () => {
-            const p = (audio.currentTime / audio.duration) * 100;
-            document.getElementById('progFill').style.width = p + '%';
-            document.getElementById('timeCurr').innerText = formatTime(audio.currentTime);
-            document.getElementById('timeTotal').innerText = formatTime(audio.duration || 0);
+    function toggleRepeat(el) { isRepeat = !isRepeat; el.style.color = isRepeat ? '#22c55e' : '#52525b'; }
+    function toggleShuffle(el) { isShuffle = !isShuffle; el.style.color = isShuffle ? '#22c55e' : '#52525b'; }
+    function toggleLike(el) { el.classList.toggle('fa-regular'); el.classList.toggle('fa-solid'); el.classList.toggle('text-green-500'); }
+
+    function showMore() {
+        if(currentIndex === -1) return;
+        const s = currentPlaylist[currentIndex];
+        alert(`Lagu: ${s.title}\\nArtis: ${s.artist}`);
+    }
+
+    audio.ontimeupdate = () => {
+        if (!isNaN(audio.duration)) {
+            const prog = (audio.currentTime / audio.duration) * 100;
+            document.getElementById('progBar').style.width = prog + '%';
+            document.getElementById('currTime').innerText = formatTime(audio.currentTime);
+            document.getElementById('totalTime').innerText = formatTime(audio.duration);
         }
+    };
 
-        function formatTime(s) {
-            const m = Math.floor(s/60);
-            const sec = Math.floor(s%60);
-            return `${m}:${sec < 10 ? '0' : ''}${sec}`;
-        }
+    function formatTime(sec) {
+        if(!sec || isNaN(sec)) return "0:00";
+        let m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+        return m + ":" + (s < 10 ? "0" + s : s);
+    }
 
-        // Search Logic
-        document.getElementById('searchInput').onkeypress = async (e) => {
-            if(e.key === 'Enter') {
-                const q = e.target.value;
-                const res = await fetch('/api/search_suggestions', {
-                    method: 'POST', headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({q: q})
-                });
-                const results = await res.json();
-                document.getElementById('searchResultGrid').innerHTML = results.map(s => `
-                    <div class="flex items-center gap-4 bg-zinc-900 p-2 rounded-lg">
-                        <img src="${s.cover}" class="w-12 h-12 rounded">
-                        <div class="flex-1 truncate">
-                            <div class="text-sm font-bold truncate">${s.title}</div>
-                            <div class="text-xs text-zinc-500">${s.artist}</div>
-                        </div>
-                        <button onclick='saveSong(${JSON.stringify(s).replace(/'/g, "&apos;")})' class="bg-white text-black text-[10px] px-3 py-1 rounded-full font-bold">SIMPAN</button>
-                    </div>
-                `).join('');
-            }
-        }
+    function seek(e) {
+        if(!audio.src || isNaN(audio.duration)) return;
+        const bar = document.getElementById('progCont');
+        const rect = bar.getBoundingClientRect();
+        const pos = (e.clientX - rect.left) / rect.width;
+        audio.currentTime = pos * audio.duration;
+    }
 
-        async function saveSong(song) {
-            await fetch('/api/add_to_db', {
-                method: 'POST', headers: {'Content-Type':'application/json'},
-                body: JSON.stringify({...song, pid: 1})
-            });
-            alert("Tersimpan!");
-        }
+    audio.onended = () => isRepeat ? audio.play() : nextSong();
 
-        loadContent('home');
-    </script>
+    async function doSearch() {
+        const q = document.getElementById('searchInput').value;
+        if (!q) return;
+        const resultDiv = document.getElementById('searchResult');
+        resultDiv.innerHTML = '<div class="flex justify-center py-10"><i class="fa-solid fa-spinner animate-spin text-3xl text-green-500"></i></div>';
+        const res = await fetch('/api/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ q: q })
+        });
+        const data = await res.json();
+        resultDiv.innerHTML = data.map(s => `
+            <div class="flex items-center gap-3 p-2 bg-zinc-900/30 rounded-lg cursor-pointer hover:bg-zinc-800 transition">
+                <img src="${s.cover}" onerror="this.src='${DEFAULT_COVER}'" class="w-12 h-12 rounded object-cover shadow">
+                <div class="flex-1 overflow-hidden" onclick="playSong('${s.yt_id}', '${s.title.replace(/'/g, "")}', '${s.artist.replace(/'/g, "")}', '${s.cover}')">
+                    <div class="text-sm font-bold truncate">${s.title}</div>
+                    <div class="text-[10px] text-zinc-400 truncate">${s.artist}</div>
+                </div>
+                <i class="fa-solid fa-plus-circle text-xl text-green-500 p-2 hover:scale-110" onclick='addSong(${JSON.stringify(s).replace(/'/g, "&apos;")})'></i>
+            </div>
+        `).join('');
+    }
+
+    async function addSong(s) {
+        await fetch('/api/add', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(s) });
+        alert('Ditambahkan ke Library!');
+    }
+
+    async function deleteSong(id) {
+        if(confirm('Hapus lagu dari Library?')) { await fetch('/api/delete/' + id, { method: 'DELETE' }); renderLibrary(); }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('progCont').onclick = seek;
+        document.getElementById('searchInput')?.addEventListener('keypress', (e) => e.key === 'Enter' && doSearch());
+    });
+</script>
 </body>
 </html>
 '''
 
-# PENYESUAIAN VERCEL NO 4:
-# Tidak boleh ada app.run() di sini. 
-# Cukup export variabel 'app'.
-init_db() 
-# app = app (sudah otomatis di Flask)
+# Ganti bagian if __name__ == '__main__': ini
+if __name__ == '__main__':
+    app.run(debug=True)
