@@ -88,10 +88,10 @@ def stream(yt_id):
 @app.route('/api/search')
 def search():
     query = request.args.get('q')
-    if not query:
-        return jsonify({"content": []})
+    if not query: return jsonify({"content": []})
     
-    # Daftar server buat dipake sama Backend
+    # Kita gunakan teknik scraping metadata dari Piped/YouTube 
+    # tapi kita rapihin biar kayak Spotify
     search_instances = [
         'https://pipedapi.kavin.rocks',
         'https://pipedapi.moomoo.me',
@@ -100,10 +100,22 @@ def search():
     
     for base in search_instances:
         try:
-            # Server Python biasanya lebih kuat buat bypass daripada browser
+            # Kita cari dengan filter music_videos biar dapet yang official
             res = requests.get(f"{base}/search?q={query}&filter=music_videos", timeout=5)
             if res.status_code == 200:
-                return jsonify(res.json())
+                data = res.json()
+                # Kita modifikasi sedikit biar datanya lebih 'bersih'
+                clean_content = []
+                for item in data.get('content', []):
+                    clean_content.append({
+                        "title": item.get('title', '').split(' (')[0].split(' [')[0], # Buang (Official Video) dsb
+                        "uploaderName": item.get('uploaderName', 'Unknown Artist').replace(' - Topic', ''), # Buang ' - Topic'
+                        "thumbnail": item.get('thumbnail'),
+                        "url": item.get('url'),
+                        "videoId": item.get('videoId'),
+                        "duration": item.get('duration', 0)
+                    })
+                return jsonify({"content": clean_content})
         except:
             continue
             
@@ -517,51 +529,49 @@ HTML_TEMPLATE = '''
         if (!q) return;
         
         const resultDiv = document.getElementById('searchResult');
-        // Tampilkan animasi loading
         resultDiv.innerHTML = '<div class="flex justify-center py-10"><i class="fa-solid fa-spinner animate-spin text-3xl text-green-500"></i></div>';
         
         try {
-            // Kita panggil "kurir" Python kita sendiri
             const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-            
-            if (!res.ok) throw new Error("Server Mogok");
-            
             const data = await res.json();
             
             if (data.content && data.content.length > 0) {
-                resultDiv.innerHTML = data.content.map(s => {
-                    // Bersihkan data lagu agar tidak error saat dipasang di HTML
-                    const songData = {
-                        title: s.title.replace(/'/g, ""),
-                        artist: s.uploaderName ? s.uploaderName.replace(/'/g, "") : "Unknown Artist",
-                        cover: s.thumbnail,
-                        yt_id: s.url ? s.url.split("v=")[1] : (s.videoId || ""),
-                        duration: s.duration >= 0 ? formatTime(s.duration) : "3:00"
-                    };
+                resultDiv.innerHTML = `
+                    <p class="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-4 ml-1">Hasil Pencarian</p>
+                    ${data.content.map(s => {
+                        const songData = {
+                            title: s.title.replace(/'/g, ""),
+                            artist: s.uploaderName.replace(/'/g, ""),
+                            cover: s.thumbnail,
+                            yt_id: s.videoId || (s.url ? s.url.split("v=")[1] : ""),
+                            duration: s.duration >= 0 ? formatTime(s.duration) : "3:00"
+                        };
     
-                    return `
-                        <div class="flex items-center gap-3 p-2 bg-zinc-900/30 rounded-lg cursor-pointer hover:bg-zinc-800 transition">
-                            <img src="${songData.cover}" onerror="this.src='${DEFAULT_COVER}'" class="w-12 h-12 rounded object-cover shadow">
-                            <div class="flex-1 overflow-hidden" onclick="playSong('${songData.yt_id}', '${songData.title}', '${songData.artist}', '${songData.cover}')">
-                                <div class="text-sm font-bold truncate">${songData.title}</div>
-                                <div class="text-[10px] text-zinc-400 truncate">${songData.artist}</div>
+                        return `
+                            <div class="flex items-center gap-4 p-2.5 hover:bg-zinc-800/50 rounded-md transition group cursor-pointer">
+                                <div class="relative w-12 h-12 flex-shrink-0" onclick="playSong('${songData.yt_id}', '${songData.title}', '${songData.artist}', '${songData.cover}')">
+                                    <img src="${songData.cover}" onerror="this.src='${DEFAULT_COVER}'" class="w-full h-full rounded object-cover shadow-lg">
+                                    <div class="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition">
+                                        <i class="fa-solid fa-play text-white text-xs"></i>
+                                    </div>
+                                </div>
+                                <div class="flex-1 overflow-hidden" onclick="playSong('${songData.yt_id}', '${songData.title}', '${songData.artist}', '${songData.cover}')">
+                                    <div class="text-sm font-semibold text-white truncate">${songData.title}</div>
+                                    <div class="text-[11px] text-zinc-400 truncate">${songData.artist}</div>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                    <span class="text-[10px] text-zinc-500 font-medium">${songData.duration}</span>
+                                    <i class="fa-solid fa-circle-plus text-xl text-zinc-600 hover:text-green-500 transition" 
+                                       onclick='addSong(${JSON.stringify(songData).replace(/'/g, "&apos;")})'></i>
+                                </div>
                             </div>
-                            <i class="fa-solid fa-plus-circle text-xl text-green-500 p-2 hover:scale-110" 
-                               onclick='addSong(${JSON.stringify(songData).replace(/'/g, "&apos;")})'></i>
-                        </div>
-                    `;
-                }).join('');
+                        `;
+                    }).join('')}`;
             } else {
-                resultDiv.innerHTML = '<p class="text-center py-10 text-zinc-500 italic">Lagu nggak ketemu, coba kata kunci lain ya!</p>';
+                resultDiv.innerHTML = '<p class="text-center py-10 text-zinc-500">Gak ada hasil, coba cari yang lain Flinn.</p>';
             }
         } catch (err) {
-            // Jika Python gagal atau Piped beneran down semua
-            resultDiv.innerHTML = `
-                <div class="text-center py-10">
-                    <p class="text-red-500 mb-2">Aduh Flinn, server lagi beneran tepar!</p>
-                    <button onclick="doSearch()" class="text-xs bg-zinc-800 px-4 py-2 rounded-full border border-zinc-700">Coba Sekali Lagi</button>
-                </div>
-            `;
+            resultDiv.innerHTML = '<p class="text-center text-red-500 py-10">Pencarian Spotify-style lagi error!</p>';
         }
     }
 
