@@ -88,51 +88,59 @@ def stream(yt_id):
 @app.route('/api/search')
 def search():
     query = request.args.get('q')
-    if not query: return jsonify({"content": []})
-    
-    # Gunakan instance yang lebih segar dan sering aktif
+    if not query:
+        return jsonify({"content": []})
+
     search_instances = [
         'https://pipedapi.kavin.rocks',
-        'https://pipedapi.lcom.cloud',
-        'https://pipedapi.mha.fi',
-        'https://piped-api.garudalinux.org',
-        'https://pipedapi.debian.social'
+        'https://pipedapi.lunar.icu',
+        'https://pipedapi.moomoo.me',
+        'https://api.piped.projectsegfau.lt'
     ]
-    
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0'}
-    
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0'
+    }
+
     for base in search_instances:
         try:
-            print(f"Mencoba mencari di: {base}") # Biar kelihatan di terminal
             url = f"{base}/search?q={query}"
-            res = requests.get(url, headers=headers, timeout=5)
-            
-            if res.status_code == 200:
-                data = res.json()
-                items = data.get('content', [])
-                
-                if not items: 
+            res = requests.get(url, headers=headers, timeout=6)
+
+            if res.status_code != 200:
+                continue
+
+            data = res.json()
+
+            # 🔥 INI KUNCINYA
+            items = data.get('items') or data.get('content') or []
+
+            results = []
+            for item in items:
+                video_id = item.get('videoId')
+                if not video_id:
                     continue
-                
-                clean_content = []
-                for item in items:
-                    # Pastikan ini adalah video, bukan channel
-                    if item.get('videoId'):
-                        clean_content.append({
-                            "title": item.get('title', '').split(' (')[0].split(' [')[0],
-                            "uploaderName": item.get('uploaderName', 'Unknown Artist'),
-                            "thumbnail": item.get('thumbnail'),
-                            "videoId": item.get('videoId'),
-                            "duration": item.get('duration', 0)
-                        })
-                
-                if clean_content:
-                    return jsonify({"content": clean_content})
+
+                thumb = item.get('thumbnail')
+                if isinstance(thumb, list):
+                    thumb = thumb[-1].get('url')
+
+                results.append({
+                    "title": item.get('title', ''),
+                    "uploaderName": item.get('uploaderName', 'Unknown'),
+                    "thumbnail": thumb,
+                    "videoId": video_id,
+                    "duration": item.get('duration', 0)
+                })
+
+            if results:
+                return jsonify({"content": results})
+
         except Exception as e:
-            print(f"Server {base} gagal: {e}")
+            print(f"{base} error:", e)
             continue
-            
-    return jsonify({"error": "Semua server Piped lagi down, Flinn!"}), 500
+
+    return jsonify({"content": []})
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
