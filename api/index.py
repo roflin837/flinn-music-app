@@ -90,36 +90,41 @@ def search():
     query = request.args.get('q')
     if not query: return jsonify({"content": []})
     
-    # Kita gunakan teknik scraping metadata dari Piped/YouTube 
-    # tapi kita rapihin biar kayak Spotify
+    # Tambah daftar instance yang lebih luas dan stabil
     search_instances = [
         'https://pipedapi.kavin.rocks',
         'https://pipedapi.moomoo.me',
-        'https://api.piped.projectsegfau.lt'
+        'https://api.piped.projectsegfau.lt',
+        'https://pipedapi.lunar.icu',
+        'https://pipedapi.rivo.me'
     ]
+    
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0 Safari/537.36'}
     
     for base in search_instances:
         try:
-            # Kita cari dengan filter music_videos biar dapet yang official
-            res = requests.get(f"{base}/search?q={query}&filter=music_videos", timeout=5)
+            # Gunakan timeout lebih singkat (3 detik) agar cepat pindah ke server lain kalau lemot
+            res = requests.get(f"{base}/search?q={query}&filter=music_videos", headers=headers, timeout=3)
             if res.status_code == 200:
                 data = res.json()
-                # Kita modifikasi sedikit biar datanya lebih 'bersih'
+                if not data.get('content'): continue # Skip kalau hasil kosong
+                
                 clean_content = []
                 for item in data.get('content', []):
                     clean_content.append({
-                        "title": item.get('title', '').split(' (')[0].split(' [')[0], # Buang (Official Video) dsb
-                        "uploaderName": item.get('uploaderName', 'Unknown Artist').replace(' - Topic', ''), # Buang ' - Topic'
+                        "title": item.get('title', '').split(' (')[0].split(' [')[0],
+                        "uploaderName": item.get('uploaderName', 'Unknown Artist').replace(' - Topic', ''),
                         "thumbnail": item.get('thumbnail'),
-                        "url": item.get('url'),
                         "videoId": item.get('videoId'),
                         "duration": item.get('duration', 0)
                     })
                 return jsonify({"content": clean_content})
-        except:
+        except Exception as e:
+            print(f"Server {base} error: {e}")
             continue
             
-    return jsonify({"error": "Semua server sibuk"}), 500
+    # Jika semua gagal, kirim pesan yang lebih sopan
+    return jsonify({"error": "Semua server lagi sibuk banget, Flinn. Coba lagi bentar ya!"}), 500
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
