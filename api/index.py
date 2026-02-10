@@ -88,72 +88,58 @@ def stream(yt_id):
 @app.route('/api/search')
 def search():
     query = request.args.get('q')
-    if not query:
-        return jsonify({"content": []})
+    if not query: return jsonify({"content": []})
 
-    # List server yang paling stabil buat region Indonesia/Asia
+    # Daftar server Piped yang lebih luas dan terbaru
     search_instances = [
         'https://pipedapi.kavin.rocks',
         'https://pipedapi.lcom.cloud',
         'https://pipedapi.mha.fi',
-        'https://pipedapi.leptons.xyz'
+        'https://pipedapi.leptons.xyz',
+        'https://pipedapi.astoria.ws',
+        'https://pipedapi.demover.me',
+        'https://pipedapi.rivo.lol'
     ]
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0'}
 
     for base in search_instances:
         try:
-            # Kita hapus filter yang ribet, biar hasilnya pasti keluar
-            url = f"{base}/search?q={encodeURIComponent(query)}&filter=videos"
-            res = requests.get(url, headers=headers, timeout=5)
+            # Kita cari secara general (tanpa filter music) biar hasilnya PASTI keluar
+            url = f"{base}/search?q={query}" 
+            res = requests.get(url, headers=headers, timeout=4)
 
-            if res.status_code != 200:
-                continue
-
-            data = res.json()
-            
-            # Cek berbagai kemungkinan format balikan dari Piped
-            items = []
-            if isinstance(data, dict):
+            if res.status_code == 200:
+                data = res.json()
+                # Piped kadang ngasih 'content', kadang 'items'
                 items = data.get('content') or data.get('items') or []
-            elif isinstance(data, list):
-                items = data
-
-            results = []
-            for item in items:
-                # Ambil videoId dengan lebih teliti
-                v_id = item.get('videoId') or (item.get('url', '').split('v=')[-1] if 'v=' in item.get('url', '') else None)
                 
-                if not v_id: continue
+                if not items: continue
 
-                # Ambil thumbnail yang paling bagus
-                thumb = item.get('thumbnail')
-                if isinstance(thumb, list) and len(thumb) > 0:
-                    thumb = thumb[-1].get('url')
+                results = []
+                for item in items:
+                    v_id = item.get('videoId')
+                    if v_id:
+                        # Ambil thumbnail yang tersedia
+                        thumb = item.get('thumbnail')
+                        if isinstance(thumb, list) and len(thumb) > 0:
+                            thumb = thumb[-1].get('url')
 
-                results.append({
-                    "title": item.get('title', 'Unknown Title'),
-                    "uploaderName": item.get('uploaderName', 'Unknown Artist'),
-                    "thumbnail": thumb,
-                    "videoId": v_id,
-                    "duration": item.get('duration', 0)
-                })
-
-            if results:
-                return jsonify({"content": results})
-
-        except Exception as e:
-            print(f"Gagal konek ke {base}: {e}")
+                        results.append({
+                            "title": item.get('title', 'Unknown'),
+                            "uploaderName": item.get('uploaderName', 'Unknown'),
+                            "thumbnail": thumb,
+                            "videoId": v_id,
+                            "duration": item.get('duration', 0)
+                        })
+                
+                if results:
+                    return jsonify({"content": results})
+        except:
             continue
 
     return jsonify({"content": []})
 
-# Tambahkan fungsi helper ini di atas biar gak error
-def encodeURIComponent(s):
-    from urllib.parse import quote
-    return quote(s)
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="id">
