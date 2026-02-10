@@ -91,45 +91,53 @@ def search():
     if not query:
         return jsonify({"content": []})
 
+    # List server yang paling stabil buat region Indonesia/Asia
     search_instances = [
         'https://pipedapi.kavin.rocks',
-        'https://pipedapi.lunar.icu',
-        'https://pipedapi.moomoo.me',
-        'https://api.piped.projectsegfau.lt'
+        'https://pipedapi.lcom.cloud',
+        'https://pipedapi.mha.fi',
+        'https://pipedapi.leptons.xyz'
     ]
 
     headers = {
-        'User-Agent': 'Mozilla/5.0'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0'
     }
 
     for base in search_instances:
         try:
-            url = f"{base}/search?q={query}"
-            res = requests.get(url, headers=headers, timeout=6)
+            # Kita hapus filter yang ribet, biar hasilnya pasti keluar
+            url = f"{base}/search?q={encodeURIComponent(query)}&filter=videos"
+            res = requests.get(url, headers=headers, timeout=5)
 
             if res.status_code != 200:
                 continue
 
             data = res.json()
-
-            # 🔥 INI KUNCINYA
-            items = data.get('items') or data.get('content') or []
+            
+            # Cek berbagai kemungkinan format balikan dari Piped
+            items = []
+            if isinstance(data, dict):
+                items = data.get('content') or data.get('items') or []
+            elif isinstance(data, list):
+                items = data
 
             results = []
             for item in items:
-                video_id = item.get('videoId')
-                if not video_id:
-                    continue
+                # Ambil videoId dengan lebih teliti
+                v_id = item.get('videoId') or (item.get('url', '').split('v=')[-1] if 'v=' in item.get('url', '') else None)
+                
+                if not v_id: continue
 
+                # Ambil thumbnail yang paling bagus
                 thumb = item.get('thumbnail')
-                if isinstance(thumb, list):
+                if isinstance(thumb, list) and len(thumb) > 0:
                     thumb = thumb[-1].get('url')
 
                 results.append({
-                    "title": item.get('title', ''),
-                    "uploaderName": item.get('uploaderName', 'Unknown'),
+                    "title": item.get('title', 'Unknown Title'),
+                    "uploaderName": item.get('uploaderName', 'Unknown Artist'),
                     "thumbnail": thumb,
-                    "videoId": video_id,
+                    "videoId": v_id,
                     "duration": item.get('duration', 0)
                 })
 
@@ -137,11 +145,15 @@ def search():
                 return jsonify({"content": results})
 
         except Exception as e:
-            print(f"{base} error:", e)
+            print(f"Gagal konek ke {base}: {e}")
             continue
 
     return jsonify({"content": []})
 
+# Tambahkan fungsi helper ini di atas biar gak error
+def encodeURIComponent(s):
+    from urllib.parse import quote
+    return quote(s)
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="id">
