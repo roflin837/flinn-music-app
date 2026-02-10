@@ -63,28 +63,28 @@ def delete_song(yt_id):
 
 @app.route('/api/stream/<yt_id>')
 def stream(yt_id):
-    try:
-        # Pake instance yang beda buat jaga-jaga
-        piped_api = f"https://pipedapi.lunar.icu/streams/{yt_id}"
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-        
-        res = requests.get(piped_api, headers=headers, timeout=10)
-        data = res.json()
-        
-        # Cari audio stream yang bukan cuma link, tapi ada isinya
-        audio_streams = data.get('audioStreams', [])
-        
-        if audio_streams:
-            # Kadang urutan pertama bukan yang terbaik, tapi kita ambil yang ada
-            return jsonify({"url": audio_streams[0]['url']})
-        
-        return jsonify({"error": "Audio tidak ditemukan di server Piped"}), 404
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+    # Daftar server buat ambil link audio
+    stream_instances = [
+        'https://pipedapi.kavin.rocks',
+        'https://pipedapi.lcom.cloud',
+        'https://pipedapi.mha.fi',
+        'https://pipedapi.drgns.space'
+    ]
+    
+    for base in stream_instances:
+        try:
+            res = requests.get(f"{base}/streams/{yt_id}", timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                audio_streams = data.get('audioStreams', [])
+                if audio_streams:
+                    # Ambil yang formatnya m4a atau yang pertama
+                    return jsonify({"url": audio_streams[0]['url']})
+        except:
+            continue
+            
+    return jsonify({"error": "Semua server Piped sibuk"}), 500
+    
 @app.route('/api/search')
 def search():
     query = request.args.get('q')
@@ -423,59 +423,27 @@ HTML_TEMPLATE = '''
         const btn = document.getElementById('playBtn');
         btn.className = "fa-solid fa-spinner animate-spin text-2xl text-green-500";
     
-        // Daftar instance Piped yang biasanya lebih stabil di Indonesia tanpa VPN
-        const instances = [
-            'https://pipedapi.kavin.rocks',
-            'https://pipedapi.moomoo.me',
-            'https://api.piped.projectsegfau.lt',
-            'https://pipedapi.drgns.space',
-            'https://piped-api.lcom.cloud'
-        ];
+        try {
+            // Ambil link stream lewat API internal kamu sendiri (/api/stream)
+            const res = await fetch(`/api/stream/${id}`);
+            const data = await res.json();
     
-        let audioUrl = null;
-    
-        // Loop untuk mencoba setiap server sampai ketemu yang jalan
-        for (let base of instances) {
-            try {
-                console.log("Mencoba ambil audio dari:", base);
-                // Tambahkan timeout agar tidak kelamaan nunggu server yang mati
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 5000);
-    
-                const res = await fetch(`${base}/streams/${id}`, { signal: controller.signal });
-                clearTimeout(timeoutId);
-    
-                const data = await res.json();
-                
-                if (data.audioStreams && data.audioStreams.length > 0) {
-                    // Cari stream dengan bitrate yang pas (biasanya m4a lebih stabil)
-                    const stream = data.audioStreams.find(s => s.format === 'M4A') || data.audioStreams[0];
-                    audioUrl = stream.url;
-                    console.log("Berhasil dapet link dari:", base);
-                    break; 
-                }
-            } catch (e) {
-                console.warn(`Server ${base} gagal/timeout. Nyoba yang lain...`);
-            }
-        }
-    
-        if (audioUrl) {
-            audio.src = audioUrl;
-            audio.load(); // Penting: Refresh source audio
-            audio.play()
-                .then(() => {
+            if (data.url) {
+                audio.src = data.url;
+                audio.play().then(() => {
                     isPlaying = true;
                     updateUI();
-                })
-                .catch(e => {
-                    // Browser sering blokir autoplay kalau user belum klik apa-apa
-                    console.error("Autoplay diblokir:", e);
+                }).catch(e => {
                     btn.className = "fa-solid fa-play text-2xl cursor-pointer text-red-500";
-                    alert("Klik tombol Play manual ya, diblokir browser nih!");
+                    alert("Klik tombol Play manual, Flinn!");
                 });
-        } else {
+            } else {
+                throw new Error("Link stream tidak ada");
+            }
+        } catch (e) {
+            console.error(e);
             btn.className = "fa-solid fa-circle-xmark text-2xl text-red-500";
-            alert("Semua server lagi mogok, Flinn! Coba lagi bentar atau cari lagu lain.");
+            alert("Gagal ambil musik. Coba lagu lain atau refresh!");
         }
     }
 
