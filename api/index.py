@@ -104,7 +104,7 @@ def search():
     for base in search_instances:
         try:
             print(f"Mencoba mencari di: {base}") # Biar kelihatan di terminal
-            url = f"{base}/search?q={query}&filter=music_videos"
+            url = f"{base}/search?q={query}"
             res = requests.get(url, headers=headers, timeout=5)
             
             if res.status_code == 200:
@@ -117,7 +117,7 @@ def search():
                 clean_content = []
                 for item in items:
                     # Pastikan ini adalah video, bukan channel
-                    if item.get('type') == 'video' or item.get('videoId'):
+                    if item.get('videoId'):
                         clean_content.append({
                             "title": item.get('title', '').split(' (')[0].split(' [')[0],
                             "uploaderName": item.get('uploaderName', 'Unknown Artist'),
